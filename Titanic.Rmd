@@ -1,0 +1,213 @@
+---
+title: "Gaining Insight Into Titanic Disaster via Machine Learning"
+author: "Daniel A. Alhassan \n [(Website)](https://sites.google.com/a/mst.edu/daniel-alhassan/)"
+subtitle: "A Basic Exploration - Part I"
+date: "`r Sys.Date()`"
+output:
+  prettydoc::html_pretty:
+    theme: architect
+    highlight: github
+    toc: yes
+---
+
+```{r install & load pkgs, echo=TRUE, error=FALSE, results='hide', warning=FALSE, include=FALSE}
+# Install and load packages needed to run this notebook.
+
+pkgs <- c("quadprog","kernlab","MASS","ggplot2","AppliedPredictiveModeling", "ISLR", "broom",
+          "nloptr","gam","gbm","nnet","polspline","nnls","BayesTree","glmnet","ElemStatLearn",
+          "randomForest","class","e1071","stepPlr","arm","party","spls","LogicReg","mboost",
+          "SIS", "ipred","mlbench","rpart","caret","mda","earth", "cowplot","DiscriMiner",
+          "tidyverse","data.table", "DT","DataExplorer","mlr","esquisse","xgboost")
+
+# see what packages are currently installed
+installed_pacakges <- row.names(installed.packages())
+# loop over the needed packages
+for(p in pkgs){
+# check if package is installed
+already_installed <- p %in% installed_pacakges
+# if not already installed, install it
+if(!already_installed){
+install.packages(p)
+}
+# and load package
+library(p, character.only = TRUE)
+}
+```
+
+## Data and its structure.
+ 
+- Read data into `R`.
+
+- Examine the data structure using `glimpse()`.
+
+- Filter any missing data using `filter()` from `dplyr` package.
+
+
+```{r DataImport & Preprocessing, results='markup', include=TRUE}
+# Read data into R
+train <- fread("train.csv")
+
+# A quick report on the data. Uncomment and run if interested.
+# create_report(titanic.train)
+
+# glimpse at data structure
+glimpse(train)
+
+# Filter missing age data
+train.age <- train %>%
+  filter(Age != "NA")
+
+# View data
+# datatable(titanic.train.age, rownames = FALSE)
+```
+
+## Exploring relationships among variables  
+
+#### Gender
+-  What is the age distribution of the passengers?
+
+-  What is proportion of survival per gender?
+
+```{r fig.width=8, fig.height=6, fig.align='center'}
+train.sex <- train.age %>%
+  group_by(Sex) %>%
+  summarize(AvgAge = round(mean(Age),2), AvgFare = round(mean(Fare),2),TotalNumber = n(),
+            TotalSurvived = sum(Survived), 
+            ProportionSurvived = round(TotalSurvived/TotalNumber, 2))
+
+# View the summary
+datatable(train.sex, caption = "Table 1: Data summary by gender", rownames = FALSE)
+
+train.age %>%
+  mutate(Survived = factor(Survived), Survived = ifelse(Survived == 1, "Survived", "Died")) %>%
+  ggplot(aes(x=Survived, fill = Survived)) + 
+  geom_bar(position = position_stack() ) + 
+  facet_wrap(~ Sex) + theme_test() +
+  ggtitle("Number of Passengers that Survived/Died")
+```
+
+- Table 1^[This statistic is excludes 177 missing data on age of passengers. However, the proportion of survival per gender is not changed significantly even in presence of missing age data], summarizes the average fare, average age and the proportion of survival by gender.
+
+- On average the males were about 31 years and females about 28 years of age.
+
+- The females (\$48) seem to have paid more on average than males(\$27) for the fare.
+
+- As it shows, about 75\% of females survived the titanic, where as only 21\% males survived. Does it suggest the males risked their lives for the females out of love? 
+
+- So it looks like gender contributes to one's survival in a way.
+
+
+#### What is the likelihood of survival by age?
+
+- Are younger males as equally likely to survive as younger females? 
+
+- Does this likelihood change for older females versus older males?
+
+```{r fig.width=8, fig.height=6, fig.align='center',warning=FALSE}
+
+train.age %>%
+  mutate(Survived = factor(Survived), Survived = ifelse(Survived == 1, "Survived", "Died")) %>%
+  ggplot(aes(x=Age, fill = Survived), alpha = 0.5) + 
+  geom_histogram(position="stack", alpha = 0.5) + 
+  facet_wrap(~ Sex) + theme_bw() + stat_bin(bins = 15) +
+  ggtitle("Likelihood of Survival by Age Distribution")
+```
+
+
+#####  Ticket class (Pclass)
+
+- Does ticket class contribute to one's survival? Are you more liekly to survive if you bought a first class ticket?
+
+```{r fig.width=8, fig.height=6, fig.align='center'}
+
+train.pclass <- train.age %>%
+  group_by(Pclass) %>%
+  summarize(TotalNumber = n(),
+            TotalSurvived = sum(Survived), 
+            ProportionSurvived = round(TotalSurvived/TotalNumber, 2))
+
+# View the summary
+datatable(train.pclass, caption = "Table 2: Data summary by ticket class", rownames = FALSE)
+
+train.age %>%
+  mutate(Survived = factor(Survived), Survived = ifelse(Survived == 1, "Survived", "Died")) %>%
+  ggplot(aes(x=Pclass, fill = Survived)) + 
+  geom_bar(position="stack") + theme_bw() +
+  ggtitle("Number of Passengers that Survived/Died")
+```
+
+- As can be seen, those with first class tickets have a greater chance of survival (66\% of survival) with the least survival coming from class 3 (24\%).
+
+
+#### What about Port of Embarkation?
+```{r fig.width=8, fig.height=6, fig.align='center'}
+
+train.embark <- train.age %>%
+  mutate(Embarked = case_when(Embarked =="S" ~ "Southampton",Embarked == "C" ~ "Cherbourg",
+                     Embarked == "Q" ~ "Queenstown") )%>%
+  group_by(Embarked) %>%
+  summarize(TotalNumber = n(),
+            TotalSurvived = sum(Survived), 
+            ProportionSurvived = round(TotalSurvived/TotalNumber, 2))
+
+# View the summary
+datatable(train.embark, caption = "Table 2: Data summary by port of embarkation", rownames = FALSE)
+
+train.age %>%
+  mutate(Survived = factor(Survived), Survived = ifelse(Survived == 1, "Survived", "Died"),
+         Embarked = case_when(Embarked =="S" ~ "Southampton",Embarked == "C" ~ "Cherbourg",
+                     Embarked == "Q" ~ "Queenstown") ) %>%
+  ggplot(aes(x=Embarked, fill = Survived)) + 
+  geom_bar(position="stack") + theme_bw() +
+  ggtitle("Number of Passengers that Survived/Died")
+```
+- 61\% of those who embarked in Cherbourg survived the disaster, with the lowest survival rate in Queenstown (29\%).
+
+- Further, one can test to see if there is a signficant difference in the survival rate in 1st class  and the other two classes combined. This way if the Titanic disaster is anything to learn  more, going forward, given the the resources one may choose wisely which class of ticket to purchase.
+
+## Fitting Machine Learning classifiers
+
+```{r MachineLearning, warning=FALSE, message=FALSE}
+set.seed(321)
+
+# Define Learners
+alg <- c("rpart", "randomForest","earth", "qda", 
+         "binomial","svm", "bst","fnn","geoDA","glmboost")
+
+# Define measures of performance
+ms <- list( "acc" = acc, "mmce" = mmce, "f1" = f1)
+
+new.train <- train.age %>%
+  select(-c("PassengerId", "Name", "Ticket","Cabin"))%>%
+  mutate(Sex = ifelse(Sex == "male",1, 0), Embarked = case_when(Embarked =="S" ~ 1, 
+                                                                Embarked == "C" ~ 2,
+                                                                Embarked == "Q" ~ 3))
+new.train <-  new.train[complete.cases(new.train),]
+
+  
+# Create a classfication task
+task <- makeClassifTask(data=new.train, target = "Survived") 
+
+# Make multiple learners
+learners <- makeLearners(cls = alg, predict.type = "response", type = "classif") 
+
+# Make a resampling description/strategy  
+rdesc <- makeResampleDesc(method = "CV", iters = 10, stratify = TRUE)
+
+# Compare the performance of nultiple learners  
+bmr <- benchmark(learners = learners, tasks = task, resamplings = rdesc, measures = ms) 
+
+bmragg <- getBMRAggrPerformances(bmr, as.df = TRUE)
+
+#Summary of learner performance
+datatable(bmragg,class = 'cell-border stripe', caption = 'Table 1: Performance of Learners')%>%
+  formatRound(c("acc.test.mean", "mmce.test.mean", "f1.test.mean"), 3) 
+
+plotBMRBoxplots(bmr = bmr)
+```
+
+- According to the accuracy level performance metric, this preliminary model will 82\% accurate predictions ^[From the both randomForest and SVM algorithms] 
+
+
+
+

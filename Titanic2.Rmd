@@ -1,0 +1,135 @@
+---
+title: "Gaining Insight Into Titanic Disaster via Machine Learning"
+author: "Daniel A. Alhassan \n [(Website)](https://sites.google.com/a/mst.edu/daniel-alhassan/)"
+subtitle: "Part 2 - Comparing several classifiers"
+date: "`r Sys.Date()`"
+output:
+  prettydoc::html_pretty:
+    theme: tactile
+    highlight: github
+    toc: yes
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r install & load pkgs, echo=TRUE, error=FALSE, results='hide', warning=FALSE, include=FALSE}
+# Install and load packages needed to run this notebook.
+
+pkgs <- c("quadprog","kernlab","MASS","ggplot2", "ISLR", "broom", "deepnet","glmnet",
+          "nloptr","gam","gbm","nnet","polspline","nnls","BayesTree","ElemStatLearn",
+          "randomForest","class","e1071","stepPlr","arm","party","spls","LogicReg","mboost",
+          "SIS", "ipred","mlbench","rpart","caret","mda","earth", "cowplot","DiscriMiner",
+          "tidyverse","data.table", "DT","DataExplorer","mlr","esquisse","xgboost")
+
+# see what packages are currently installed
+installed_pacakges <- row.names(installed.packages())
+# loop over the needed packages
+for(p in pkgs){
+# check if package is installed
+already_installed <- p %in% installed_pacakges
+# if not already installed, install it
+if(!already_installed){
+install.packages(p)
+}
+# and load package
+library(p, character.only = TRUE)
+}
+```
+
+
+## Data Preprocessing
+
+- To make use of the passengers name column as a predictor, I obtained the titles 
+of each passenger using some prewritten code from [Trevor Stephens](https://trevorstephens.com/kaggle-titanic-tutorial/r-part-4-feature-engineering/)
+
+- 
+```{r, warning=FALSE, message=FALSE}
+# Read data into R
+train <- fread("train.csv")
+
+test <- fread("test.csv")
+test$Survived <- NA
+
+combined <- rbind(train, test)
+
+combined$Name <- as.character(combined$Name)
+
+
+combined$Title <- sapply(combined$Name, FUN = function(x) {
+  strsplit(x, split = '[,.]')[[1]][2]})
+
+#remove white space
+combined$Title <- sub(' ', '', combined$Title)
+
+#distrbiution of titles
+table(combined$Title)
+
+# some categories are less frequent and so can be regrouped.
+
+combined$Title[combined$Title %in% c("Mlle", "Mme")] <- "Mlle"
+
+combined$Title[combined$Title %in% c("Capt", "Don", "Major","Sir")] <- "Sir"
+
+combined$Title[combined$Title %in% c("Dona", "Lady","the Countess", "Jonkheer")] <- "Lady"
+
+# change data type back to factor
+combined$Title <- factor(combined$Title)
+
+# split data into train and test
+train2 <- combined[1:891,]
+test2 <- combined[892:nrow(combined),]
+
+```
+
+
+## A Supposedly better set of classifiers
+```{r, warning=FALSE, message=FALSE, include=TRUE}
+set.seed(222)
+
+# Filter missing age data
+train2.age <- train2 %>%
+  filter(Age != "NA")
+
+# Define Learners
+library <- c("rpart", "randomForest","earth","svm")
+
+# Define measures of performance
+measures <- list("acc" = acc, "mmce" = mmce, "f1" = f1)
+
+modified_train <- train2.age %>%
+  select(-c("PassengerId", "Name", "Ticket","Cabin"))%>%
+  mutate(Sex = ifelse(Sex == "male",1, 0), Embarked = case_when(Embarked =="S" ~ 1, 
+                                                                Embarked == "C" ~ 2,
+                                                                Embarked == "Q" ~ 3))
+
+modified_train2 <-  modified_train[complete.cases(modified_train),]
+
+modified_train2 <- modified_train2 %>%
+                      mutate(Survived = as.integer(Survived))
+
+  
+# Create a classfication task
+task2 <- makeClassifTask(data=modified_train2, target = "Survived") 
+
+# Make multiple learners
+learners2 <- makeLearners(cls = library, predict.type = "response", type = "classif") 
+
+# Make a resampling description/strategy  
+rdesc2 <- makeResampleDesc(method = "CV", iters = 10, stratify = TRUE)
+
+# Compare the performance of nultiple learners  
+bmr2 <- benchmark(learners = learners2, tasks = task2, resamplings = rdesc2, 
+                  measures = measures) 
+
+bmragg2 <- getBMRAggrPerformances(bmr2, as.df = TRUE)
+
+datatable(bmragg2,class = 'cell-border stripe', caption = 'Table 1: Performance of Learners')%>%
+  formatRound(c("acc.test.mean", "mmce.test.mean", "f1.test.mean"), 3)  
+
+plotBMRSummary(bmr = bmr2)
+plotBMRBoxplots(bmr = bmr2)
+```
+
+- All four learners did very well in terms of accuracy metric. With Support Vector Machine outperforming the others on all three metrics considered with predictive accuracy of 82.7\%.
